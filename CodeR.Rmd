@@ -1,0 +1,243 @@
+---
+title: "Pemodelan Stokastik"
+output: word_document
+date: "2025-11-17"
+---
+
+```{r}
+library(readxl)
+library(dplyr)
+library(stringr)
+
+df <- read_excel("C:/Users/HP/Downloads/Studi_Rantai_Markov_130_Responden_SetelahPenambahan'.xlsx")
+
+df <- df %>% 
+  mutate(
+    `Merk HP Saat Ini` = str_to_title(str_trim(`Merk HP Saat Ini`)),
+    `Merk HP Sebelumnya` = str_to_title(str_trim(`Merk HP Sebelumnya`))
+  )
+```
+
+```{r}
+df <- df %>% 
+  mutate(
+    `Merk HP Sebelumnya` = ifelse(
+      str_detect(`Merk HP Sebelumnya`, "Belum"),
+      NA,
+      `Merk HP Sebelumnya`
+    )
+  )
+```
+
+```{r}
+brands <- c("Samsung", "Xiaomi", "Oppo", "Vivo", 
+            "Realme", "Iphone", "Infinix", "Huawei")
+```
+
+```{r}
+df <- df %>% 
+  mutate(
+    `Merk HP Saat Ini` = ifelse(`Merk HP Saat Ini` %in% brands, 
+                                `Merk HP Saat Ini`, 
+                                "Others"),
+    `Merk HP Sebelumnya` = ifelse(`Merk HP Sebelumnya` %in% brands, 
+                                  `Merk HP Sebelumnya`, 
+                                  "Others")
+  )
+```
+
+```{r}
+# Filter hanya baris yang Merk HP Sebelumnya tidak NA
+df_non_na <- df %>% 
+  filter(!is.na(`Merk HP Sebelumnya`))
+
+# Buat tabel kontingensi
+contingency <- table(df_non_na$`Merk HP Sebelumnya`,
+                     df_non_na$`Merk HP Saat Ini`) %>% 
+  as.matrix()
+
+# Pastikan semua brand menjadi baris & kolom, isi kosong = 0
+contingency <- contingency[brands, brands, drop = FALSE]
+contingency[is.na(contingency)] <- 0
+```
+
+```{r}
+states <- brands
+print(paste("Ruang Keadaan (State):", paste(states, collapse = ", ")))
+```
+
+```{r}
+# (opsional) Laplace smoothing: aktifkan jika diperlukan
+# contingency <- contingency + 1
+
+# Hitung jumlah per baris
+row_sums <- rowSums(contingency)
+row_sums[row_sums == 0] <- NA   # hindari pembagian 0
+
+# Matriks transisi (normalisasi baris)
+P <- contingency / row_sums
+
+# Ganti NA menjadi 0
+P[is.na(P)] <- 0
+
+# Tampilkan hasil
+cat("Counts:\n")
+print(contingency)
+
+cat("\nTransition matrix P (rows sum to 1):\n")
+print(round(P, 4))
+```
+
+```{r}
+install.packages(c("igraph", "ggraph", "ggplot2"))
+```
+
+```{r}
+library(igraph)
+library(ggraph)
+library(ggplot2)
+
+# Membuat graph berarah
+edges <- data.frame(
+  from = rep(brands, each = length(brands)),
+  to = rep(brands, times = length(brands)),
+  weight = as.vector(P)
+)
+
+# Ambil hanya edge dengan probabilitas > 0
+edges <- edges %>% 
+  filter(weight > 0)
+
+# Buat objek graph
+g <- graph_from_data_frame(edges, directed = TRUE, vertices = data.frame(name = brands))
+
+# Plot graf transisi
+ggraph(g, layout = "fr") +   # "fr" = Fruchterman-Reingold (mirip spring_layout)
+  geom_edge_link(aes(width = weight), 
+                 arrow = arrow(type = "closed", length = unit(3, "mm")),
+                 end_cap = circle(3, 'mm'),
+                 alpha = 0.7) +
+  geom_node_point(size = 12, color = "lightblue") +
+  geom_node_text(aes(label = name), size = 4, vjust = 0.5) +
+  scale_edge_width(range = c(0.2, 2)) +   # ketebalan mirip NetworkX
+  ggtitle("Diagram Transisi Rantai Markov Pergantian Merek HP") +
+  theme_void()
+```
+
+# Hitung probabilitas langkah ke-n (misalnya ke-2)
+
+```{r}
+n <- 2
+P_n <- P
+
+# Perkalian matriks transisi sebanyak n-1 kali
+for (i in 1:(n - 1)) {
+  P_n <- P_n %*% P
+}
+
+cat(paste0("Probabilitas langkah ke-", n, ":\n"))
+print(round(P_n, 4))
+```
+
+```{r}
+# Hitung eigenvalue dan eigenvector dari P transpose
+eig <- eigen(t(P))
+
+# Ambil nilai eigen yang mendekati 1
+idx <- which(abs(eig$values - 1) < 1e-8)
+
+# Ambil eigenvector terkait
+stationary_dist <- Re(eig$vectors[, idx])
+
+# Normalisasi agar jadi distribusi probabilitas
+stationary_dist <- stationary_dist / sum(stationary_dist)
+
+cat("Distribusi Stasioner:\n")
+print(round(stationary_dist, 4))
+```
+
+```{r}
+# Membuat named vector: nama = brand, nilai = prob stasioner
+state_classification <- setNames(as.numeric(stationary_dist), brands)
+
+# Urutkan dari probabilitas terbesar ke terkecil
+sorted_states <- sort(state_classification, decreasing = TRUE)
+
+cat("Klasifikasi ruang keadaan berdasarkan distribusi stasioner:\n")
+
+# Print satu per satu seperti Python
+for (i in seq_along(sorted_states)) {
+  cat(names(sorted_states)[i], ": ", sprintf("%.4f", sorted_states[i]), "\n", sep = "")
+}
+```
+
+# Grafik Distribusi Merek
+
+```{r}
+library(ggplot2)
+
+# Grafik: Merek HP Sebelum
+ggplot(df, aes(x = `Merk HP Sebelumnya`)) +
+  geom_bar(fill = "steelblue") +
+  labs(
+    title = "Distribusi Merek HP Sebelum",
+    x = "Merek HP",
+    y = "Jumlah Mahasiswa"
+  ) +
+  theme_minimal()
+
+# Grafik: Merek HP Saat Ini
+ggplot(df, aes(x = `Merk HP Saat Ini`)) +
+  geom_bar(fill = "darkorange") +
+  labs(
+    title = "Distribusi Merek HP Saat Ini",
+    x = "Merek HP",
+    y = "Jumlah Mahasiswa"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Ringkasan jumlah pengguna tiap merek
+df %>%
+  count(`Merk HP Sebelumnya`, name = "Jumlah")
+
+# Ringkasan persentase tiap merek
+df %>%
+  count(`Merk HP Sebelumnya`, name = "Jumlah") %>%
+  mutate(Persentase = round(Jumlah / sum(Jumlah) * 100, 2))
+```
+
+```{r}
+# Melihat statistika deskriptif untuk kolom numerik (jumlah responden)
+summary(df_non_na)
+
+```
+
+```{r}
+# Jika Anda ingin lebih rinci, gunakan summarise() dari dplyr
+df_non_na %>% 
+  summarise(
+    count = n(),
+    mean_current = mean(`Merk HP Saat Ini`, na.rm = TRUE),
+    median_current = median(`Merk HP Saat Ini`, na.rm = TRUE),
+    sd_current = sd(`Merk HP Saat Ini`, na.rm = TRUE),
+    min_current = min(`Merk HP Saat Ini`, na.rm = TRUE),
+    max_current = max(`Merk HP Saat Ini`, na.rm = TRUE),
+    mean_previous = mean(`Merk HP Sebelumnya`, na.rm = TRUE),
+    median_previous = median(`Merk HP Sebelumnya`, na.rm = TRUE),
+    sd_previous = sd(`Merk HP Sebelumnya`, na.rm = TRUE),
+    min_previous = min(`Merk HP Sebelumnya`, na.rm = TRUE),
+    max_previous = max(`Merk HP Sebelumnya`, na.rm = TRUE)
+  )
+
+# Statistik frekuensi untuk merk HP (jumlah setiap merk)
+df_non_na %>% 
+  count(`Merk HP Saat Ini`) %>% 
+  arrange(desc(n))
+
+df_non_na %>% 
+  count(`Merk HP Sebelumnya`) %>% 
+  arrange(desc(n))
+```
