@@ -241,3 +241,4 @@ df_non_na %>%
   count(`Merk HP Sebelumnya`) %>% 
   arrange(desc(n))
 ```
+
