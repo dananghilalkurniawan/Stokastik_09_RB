@@ -173,11 +173,6 @@ summary(df_non_na)
 df_non_na %>% count(`Merk HP Saat Ini`) %>% arrange(desc(n))
 df_non_na %>% count(`Merk HP Sebelumnya`) %>% arrange(desc(n))
 ```
-## video
-
-
-
-https://github.com/user-attachments/assets/18530fcb-4af3-44d3-871c-7a48a237aefb
 
 
 
